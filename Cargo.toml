@@ -1,0 +1,11 @@
+[package]
+name = "octopus"
+version = "0.1.0"
+authors = ["Nathan Hoad <nathan@getoffmalawn.com>"]
+
+[dependencies]
+http-muncher = "0.2.3"
+
+[dependencies.url]
+git = "https://github.com/servo/rust-url"
+
