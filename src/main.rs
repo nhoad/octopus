@@ -1,207 +1,106 @@
-extern crate http_muncher;
-extern crate url;
+extern crate httparse;
+extern crate octopus;
 
-use std::collections::HashMap;
 use std::io::prelude::*;
-use std::mem;
 use std::net::{TcpListener, TcpStream};
 use std::thread;
 
-use url::{Url, ParseError};
+use octopus::request::Request;
 
-use http_muncher::{Parser, ParserHandler};
+fn read_into_buffer<R: Read>(stream: &mut R, buffer: &mut Vec<u8>) -> std::io::Result<usize> {
+    let len = buffer.len();
+    let capacity = buffer.capacity();
 
-struct HttpParser {
-    current_key: Option<String>,
-    headers_complete: bool,
-    headers: HashMap<String, String>,
-    url: Option<String>
-}
+    let resize_amount = 4096;
 
-
-impl HttpParser {
-    pub fn new() -> HttpParser {
-        HttpParser {
-            url: None,
-            current_key: None,
-            headers_complete: false,
-            headers: HashMap::new(),
+    match len {
+        0 => {
+            println!("buffer is empty, growing {} -> {}", len, len + resize_amount);
+            buffer.resize(len + resize_amount, 0);
+        },
+        _ if len == capacity => {
+            println!("buffer is at capacity, growing {} -> {}", len, len + resize_amount);
+            buffer.resize(len + resize_amount, 0);
+        }
+        _ => {
+            assert!(0 < len && len < capacity);
         }
     }
+
+    stream.read(&mut buffer[len..])
 }
 
-impl HttpParser {
-    fn request(&mut self) -> Request {
-        // FIXME: benchmark this.
-        let unparsed = mem::replace(&mut self.url, None).unwrap();
-        let url = match Url::parse(&unparsed) {
-            Ok(v) => v,
-            Err(ParseError::RelativeUrlWithoutBase) => {
-                // FIXME: don't assume http! Gross! Scheme can be derived from
-                // what the listening port is expecting.
-                let mut s: String = "http://".into();
-                s.push_str(self.headers.get("Host").expect("Host header was missing"));
-                s.push_str(&unparsed);
-                println!("full url is {}", s);
-                Url::parse(&s).unwrap()
-            },
-            Err(s) => panic!(s),
-        };
+fn handle_request<'buf, S: Write + Read>(stream: &mut S, request: Request<'buf>, body: Vec<u8>) {
+    let mut body = body;
 
-        Request {
-            url: url,
-            headers: mem::replace(&mut self.headers, HashMap::new()),
-        }
-    }
-}
+    match request.headers.content_length() {
+        Some(n) => {
+            if body.len() == n {
+                println!("We have it all, no need to read");
+            } else if body.len() > n {
+                println!("We have too much, what?!");
+            } else {
+                println!("We have {} bytes of {}", body.len(), n);
+                // FIXME: What if it's a 50gb upload! It should read up to a
+                // maximum of 65535 bytes or something, otherwise stream it.
+                let i = body.len();
 
-// FIXME: Would this be better as a state handler than a parser handler? i.e.
-// make it connect upstream and all that?
-impl ParserHandler for HttpParser {
-
-    fn on_url(&mut self, url: &[u8]) -> bool {
-        self.url = Some(std::str::from_utf8(url).unwrap().to_string());
-        true
-    }
-
-    fn on_header_field(&mut self, s: &[u8]) -> bool {
-        self.current_key = Some(std::str::from_utf8(s).unwrap().to_string());
-        true
-    }
-
-    fn on_header_value(&mut self, header: &[u8]) -> bool {
-        // FIXME: this can be called multiple times for large values?
-        // https://github.com/nbaksalyar/rust-streaming-http-parser/issues/4
-        let key = mem::replace(&mut self.current_key, None).unwrap();
-        self.headers.insert(
-            key,
-            std::str::from_utf8(header).unwrap().to_string());
-        true
-    }
-
-    fn on_headers_complete(&mut self) -> bool {
-        self.headers_complete = true;
-        false
-    }
-
-    //fn on_status(&mut self, status: &[u8]) -> bool { false }
-    //fn on_body(&mut self, body: &[u8]) -> bool { false }
-    //fn on_message_begin(&mut self) -> bool { false }
-    //fn on_message_complete(&mut self) -> bool { false }
-    //fn on_chunk_header(&mut self) -> bool { false }
-    //fn on_chunk_complete(&mut self) -> bool { false }
-}
-
-#[derive(Debug)]
-struct Request {
-    url: Url,
-    headers: HashMap<String, String>,
-}
-
-impl Request {
-    fn write_reqline(&self, method: &'static str, version: (u16, u16), stream: &mut TcpStream) {
-        let (major, minor) = version;
-        // FIXME: cargo run --release makes the method "<unknown>" here?
-        let reqline = format!("{} {} HTTP/{}.{}\r\n", method, self.url.path(), major, minor);
-        println!("writing {:?}", reqline);
-        stream.write_all(&(reqline).as_bytes()).unwrap();
-    }
-
-    fn write_headers(&self, stream: &mut TcpStream) {
-        // iterate over everything.
-        for (key, value) in &self.headers {
-            let header = format!("{}: {}\r\n", key, value);
-            stream.write_all(&(header).as_bytes()).unwrap();
-        }
-        stream.write_all(b"\r\n").unwrap();
-    }
-
-    fn port(&self) -> u16 {
-        match self.url.port() {
-            Some(port) => port,
-            None => {
-                match self.url.scheme() {
-                    "http" => 80,
-                    "https" => 443,
-                    _ => panic!("Unknown scheme {}", self.url.scheme())
-                }
+                body.reserve(n);
+                body.resize(n, 0);
+                stream.read_exact(&mut body[i..n-i]).unwrap();
             }
+        },
+        None => {
+            assert!(body.len() == 0);
         }
     }
+
+    println!("Handle this: {:?} {:?}", request, request.headers.content_length());
+
+    // XXX: definitely 1.0 candidate code.
+    stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\nCool: header\r\n\r\nhey dude").unwrap();
+    stream.flush().unwrap();
 }
 
 fn handle_client(mut stream: TcpStream) {
-    let mut buffer = [0; 65536];
-    let mut parser = Parser::request(HttpParser::new());
+    let default_size = 65535;
+    let mut buffer = Vec::with_capacity(default_size);
+    let mut headers = [httparse::EMPTY_HEADER; 16];
+    let mut total_read = 0;
 
     loop {
-        let s = stream.read(&mut buffer[..]).unwrap();
-        if s == 0 {
-            // FIXME: handle this better.
-            println!("empty read, bailing");
-            break
+        match read_into_buffer(&mut stream, &mut buffer) {
+            Ok(0) => {
+                println!("empty read, bailing");
+                return
+            },
+            Ok(n) => {
+                total_read += n;
+                println!("Did a read {}", n);
+            },
+            Err(e) => {
+                println!("Error occurred while reading {}", e);
+                return;
+            }
         }
-        println!("feeding {} bytes", s);
-        parser.parse(&buffer);
 
-        let handler = parser.get();
-        if handler.headers_complete {
-            break
-        } else {
-            println!("not complete yet");
-        }
-    }
-
-    let http_version = parser.http_version();
-    let http_method = parser.http_method();
-    println!("method is {}, {:?}", http_method, http_version);
-    let handler = parser.get();
-
-    assert!(handler.headers_complete);
-
-    let request = handler.request();
-
-    println!("request {:?}", request);
-
-    let domain = request.url.host_str().unwrap();
-
-    println!("Connecting upstream");
-
-    // FIXME: perform and cache DNS lookup for the domain.
-    let mut upstream = TcpStream::connect((domain, request.port())).unwrap();
-    println!("Connected upstream");
-
-    request.write_reqline(http_method, http_version, &mut upstream);
-    request.write_headers(&mut upstream);
-
-    // FIXME: check for a request body and start streaming that, using the
-    // parser
-
-    // FIXME: do something more sophisticated, involving parsing the response
-    splice(&mut upstream, &mut stream);
-}
-
-fn splice(sender: &mut TcpStream, receiver: &mut TcpStream) {
-    let mut buffer = [0; 65536];
-
-    loop {
-        let n = sender.read(&mut buffer[..]).unwrap();
-
-        if n > 0 {
-            match receiver.write_all(&buffer[..n]) {
-                Ok(..) => {},
-                Err(e) => {
-                    println!("error writing to client {}", e);
-                    return;
+        {
+            let mut request = httparse::Request::new(&mut headers);
+            match request.parse(&buffer).unwrap() {
+                httparse::Status::Complete(n) => {
+                    let body = buffer[n..total_read].iter().cloned().collect();
+                    let request = Request::from_raw(request);
+                    handle_request(&mut stream, request, body);
+                },
+                _ => {
+                    continue;
                 }
             }
-        } else {
-            println!("sender went away");
-            break
         }
-    }
 
-    receiver.flush().unwrap();
+        // reset the buffer so we have a clean slate for keep-alive.
+        buffer.truncate(0);
+    }
 }
 
 fn main() {
