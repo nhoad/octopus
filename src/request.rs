@@ -1,6 +1,8 @@
 extern crate httparse;
 extern crate url;
 
+use std::io::prelude::*;
+use std::net::TcpStream;
 use std::str;
 
 use ::headers::Headers;
@@ -68,5 +70,60 @@ impl<'buf, 'headers> Request<'buf> {
             version: request.version.unwrap(),
         }
     }
-}
 
+    // FIXME: Every method from here onwards should be moved onto traits or a
+    // client library or something, not here.
+
+    pub fn forward<S: Write>(&self, downstream: &mut S, body: Vec<u8>) {
+        let mut upstream = self.connect();
+
+        upstream.write_all(&self.serialize()).unwrap();
+        upstream.write_all(&body).unwrap();
+
+        let mut buffer = [0; 65535];
+
+        // FIXME: actually parse the response here.
+        loop {
+            match upstream.read(&mut buffer) {
+                Ok(0) => {
+                    break
+                },
+                Ok(n) => {
+                    downstream.write_all(&buffer[..n]).unwrap();
+                },
+                Err(e) => {
+                    println!("Error {}", e);
+                    break
+                }
+            }
+        }
+    }
+
+    // FIXME: is there a serialization trait of some sort I can implement?
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut out = Vec::<u8>::with_capacity(65535);
+
+        let reqline = format!("{} {} HTTP/1.{}\r\n", self.method, self.url.path(), self.version);
+        out.extend(reqline.as_bytes());
+        out.extend(self.headers.serialize());
+        out.extend(b"\r\n");
+
+        out
+    }
+
+    pub fn connect(&self) -> TcpStream {
+        let domain = self.url.host_str().unwrap();
+        let port = match self.url.port() {
+            Some(port) => port,
+            None => {
+                match self.url.scheme() {
+                    "http" => 80,
+                    "https" => 443,
+                    _ => panic!("Unknown scheme {}", self.url.scheme())
+                }
+            }
+        };
+
+        TcpStream::connect((domain, port)).unwrap()
+    }
+}

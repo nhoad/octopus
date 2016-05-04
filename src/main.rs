@@ -57,9 +57,7 @@ fn handle_request<'buf, S: Write + Read>(stream: &mut S, request: Request<'buf>,
 
     println!("Handle this: {:?} {:?}", request, request.headers.content_length());
 
-    // XXX: definitely 1.0 candidate code.
-    stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\nCool: header\r\n\r\nhey dude").unwrap();
-    stream.flush().unwrap();
+    request.forward(stream, body);
 }
 
 fn handle_client(mut stream: TcpStream) {
