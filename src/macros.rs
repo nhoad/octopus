@@ -4,7 +4,8 @@ macro_rules! fatal {
     ( $( $x:expr ),* ) => {
         {
             use std::io::stderr;
-            writeln!(&mut stderr(), $($x,)*);
+            let message = format!( $($x,)* );
+            writeln!(&mut stderr(), "FATAL: {}", message).unwrap();
             std::process::exit(1);
         }
     }
