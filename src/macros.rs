@@ -1,12 +1,12 @@
-
 #[macro_export]
 macro_rules! fatal {
     ( $( $x:expr ),* ) => {
         {
-            use std::io::stderr;
+            use std::io::{stderr, Write};
+            use std::process;
             let message = format!( $($x,)* );
             writeln!(&mut stderr(), "FATAL: {}", message).unwrap();
-            std::process::exit(1);
+            process::exit(1);
         }
     }
 }

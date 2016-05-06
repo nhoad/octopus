@@ -4,7 +4,6 @@ use std::str;
 use std::collections::{HashMap, LinkedList};
 use std::collections::hash_map::Entry;
 
-
 #[derive(Debug)]
 pub struct Headers<'buf> {
     // FIXME: case insensitivity
