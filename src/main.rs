@@ -1,4 +1,6 @@
 extern crate httparse;
+
+#[macro_use]
 extern crate octopus;
 
 use std::io::prelude::*;
@@ -102,7 +104,12 @@ fn handle_client(mut stream: TcpStream) {
 }
 
 fn main() {
-    let listener = TcpListener::bind("127.0.0.1:8000").unwrap();
+    let port = 8000;
+
+    let listener = match TcpListener::bind(("127.0.0.1", port)) {
+        Ok(v) => v,
+        Err(e) => fatal!("Could not bind listener to port {}: {}", port, e)
+    };
 
     // accept connections and process them, spawning a new thread for each one
     for stream in listener.incoming() {
