@@ -4,9 +4,7 @@ use std::io::{self, Read, Write};
 
 use ::request::Request;
 
-fn handle_request<'buf, S: Write + Read>(stream: &mut S, request: Request<'buf>, body: Vec<u8>) {
-    let mut body = body;
-
+fn handle_request<'buf, S: Write + Read>(stream: &mut S, request: Request<'buf>, mut body: Vec<u8>) {
     match request.headers.content_length() {
         Some(n) => {
             if body.len() == n {
