@@ -35,8 +35,7 @@ fn handle_request<'buf, S: Write + Read>(stream: &mut S, request: Request<'buf>,
 }
 
 pub fn handle_client<S: Write + Read>(mut stream: S) {
-    let default_size = 65535;
-    let mut buffer = Vec::with_capacity(default_size);
+    let mut buffer = Vec::with_capacity(65536);
     let mut headers = [httparse::EMPTY_HEADER; 16];
     let mut total_read = 0;
 
@@ -75,26 +74,54 @@ pub fn handle_client<S: Write + Read>(mut stream: S) {
     }
 }
 
+/// Read from the given stream into the given buffer.
+/// Interally this will perform a read for up to 65536 bytes of data, and
+/// append it to the end of the given buffer.
 fn read_into_buffer<R: Read>(stream: &mut R, buffer: &mut Vec<u8>) -> io::Result<usize> {
-    let len = buffer.len();
-    let capacity = buffer.capacity();
 
-    let resize_amount = 4096;
+    // XXX: it would be nice to benchmark how this compares to reading directly
+    // into the given buffer.
 
-    match len {
-        0 => {
-            println!("buffer is empty, growing {} -> {}", len, len + resize_amount);
-            buffer.resize(len + resize_amount, 0);
-        },
-        _ if len == capacity => {
-            println!("buffer is at capacity, growing {} -> {}", len, len + resize_amount);
-            buffer.resize(len + resize_amount, 0);
+    // We do it this way to ensure we only put data into `buffer` that was
+    // actually read from the stream, and not accidentally leave the buffer
+    // filled with nulls from a resize.
+
+    let mut read_buf = vec![0; 65536];
+    match stream.read(&mut read_buf) {
+        Ok(n) if n > 0 => {
+            unsafe {
+                read_buf.set_len(n);
+            }
+            buffer.append(&mut read_buf);
+            Ok(n)
         }
-        _ => {
-            assert!(0 < len && len < capacity);
-        }
+        r => r,
     }
-
-    stream.read(&mut buffer[len..])
 }
 
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use super::read_into_buffer;
+
+    #[test]
+    fn test_read_into_buffer() {
+        let mut s = Cursor::new("Hello world");
+        let mut buf = Vec::with_capacity(5);
+
+        assert_eq!(11, read_into_buffer(&mut s, &mut buf).unwrap());
+        assert_eq!(&buf[..], b"Hello world");
+
+        let mut s = Cursor::new("!");
+
+        assert_eq!(1, read_into_buffer(&mut s, &mut buf).unwrap());
+
+        assert_eq!(&buf, b"Hello world!");
+
+        assert_eq!(0, read_into_buffer(&mut s, &mut buf).unwrap());
+
+        assert_eq!(&buf, b"Hello world!");
+    }
+}
