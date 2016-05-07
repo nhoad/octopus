@@ -26,9 +26,7 @@ fn main() {
         println!("Starting tcp echo server on {:?}", try!(listener.local_addr()));
 
         loop {
-            println!("before accepting");
             let conn = try!(listener.accept());
-            println!("accepted");
 
             mioco::spawn(move || -> io::Result<()> {
                 handle_client(conn);
