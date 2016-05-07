@@ -1,9 +1,14 @@
 extern crate httparse;
 extern crate url;
+extern crate mioco;
 
 use std::io::prelude::*;
-use std::net::TcpStream;
+use std::str::FromStr;
+use std::net;
 use std::str;
+use std::io;
+
+use self::mioco::tcp::TcpStream;
 
 use ::headers::Headers;
 
@@ -75,26 +80,32 @@ impl<'buf, 'headers> Request<'buf> {
     // client library or something, not here.
 
     pub fn forward<S: Write>(&self, downstream: &mut S, body: Vec<u8>) {
-        let mut upstream = self.connect();
+        match self.connect() {
+            Ok(mut upstream) => {
+                upstream.write_all(&self.serialize()).unwrap();
+                upstream.write_all(&body).unwrap();
 
-        upstream.write_all(&self.serialize()).unwrap();
-        upstream.write_all(&body).unwrap();
+                let mut buffer = [0; 65535];
 
-        let mut buffer = [0; 65535];
-
-        // FIXME: actually parse the response here.
-        loop {
-            match upstream.read(&mut buffer) {
-                Ok(0) => {
-                    break
-                },
-                Ok(n) => {
-                    downstream.write_all(&buffer[..n]).unwrap();
-                },
-                Err(e) => {
-                    println!("Error {}", e);
-                    break
+                // FIXME: actually parse the response here.
+                loop {
+                    match upstream.read(&mut buffer) {
+                        Ok(0) => {
+                            break
+                        },
+                        Ok(n) => {
+                            downstream.write_all(&buffer[..n]).unwrap();
+                        },
+                        Err(e) => {
+                            println!("Error {}", e);
+                            break
+                        }
+                    }
                 }
+            },
+            Err(_) => {
+                downstream.write_all(b"HTTP/1.1 501 Internal Server Error\r\nContent-Length: 6\r\nSorry\n").unwrap();
+                return;
             }
         }
     }
@@ -111,7 +122,7 @@ impl<'buf, 'headers> Request<'buf> {
         out
     }
 
-    pub fn connect(&self) -> TcpStream {
+    pub fn connect(&self) -> io::Result<TcpStream> {
         let domain = self.url.host_str().unwrap();
         let port = match self.url.port() {
             Some(port) => port,
@@ -124,6 +135,22 @@ impl<'buf, 'headers> Request<'buf> {
             }
         };
 
-        TcpStream::connect((domain, port)).unwrap()
+        // FIXME: DNS Lookup. net::lookup_addrs is unstable and also blocking.
+        let ip = net::IpAddr::from_str(domain).unwrap();
+        let addr = net::SocketAddr::new(ip, port);
+
+        // FIXME: configurable retry count
+        for _ in 0..2 {
+            match TcpStream::connect(&addr) {
+                Ok(conn) => {
+                    return Ok(conn);
+                },
+                Err(e) => {
+                    println!("failed to connect: {}", e);
+                }
+            }
+        }
+
+        TcpStream::connect(&addr)
     }
 }
