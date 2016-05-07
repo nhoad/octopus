@@ -1,129 +1,43 @@
-extern crate httparse;
+#[macro_use]
+extern crate mioco;
 
 #[macro_use]
 extern crate octopus;
 
-use std::io::prelude::*;
-use std::net::{TcpListener, TcpStream};
-use std::thread;
+use std::str::FromStr;
+use std::io;
+use std::net;
 
-use octopus::request::Request;
+use mioco::tcp::TcpListener;
 
-fn read_into_buffer<R: Read>(stream: &mut R, buffer: &mut Vec<u8>) -> std::io::Result<usize> {
-    let len = buffer.len();
-    let capacity = buffer.capacity();
-
-    let resize_amount = 4096;
-
-    match len {
-        0 => {
-            println!("buffer is empty, growing {} -> {}", len, len + resize_amount);
-            buffer.resize(len + resize_amount, 0);
-        },
-        _ if len == capacity => {
-            println!("buffer is at capacity, growing {} -> {}", len, len + resize_amount);
-            buffer.resize(len + resize_amount, 0);
-        }
-        _ => {
-            assert!(0 < len && len < capacity);
-        }
-    }
-
-    stream.read(&mut buffer[len..])
-}
-
-fn handle_request<'buf, S: Write + Read>(stream: &mut S, request: Request<'buf>, body: Vec<u8>) {
-    let mut body = body;
-
-    match request.headers.content_length() {
-        Some(n) => {
-            if body.len() == n {
-                println!("We have it all, no need to read");
-            } else if body.len() > n {
-                println!("We have too much, what?!");
-            } else {
-                println!("We have {} bytes of {}", body.len(), n);
-                // FIXME: What if it's a 50gb upload! It should read up to a
-                // maximum of 65535 bytes or something, otherwise stream it.
-                let i = body.len();
-
-                body.reserve(n);
-                body.resize(n, 0);
-                stream.read_exact(&mut body[i..n-i]).unwrap();
-            }
-        },
-        None => {
-            assert!(body.len() == 0);
-        }
-    }
-
-    println!("Handle this: {:?} {:?}", request, request.headers.content_length());
-
-    request.forward(stream, body);
-}
-
-fn handle_client(mut stream: TcpStream) {
-    let default_size = 65535;
-    let mut buffer = Vec::with_capacity(default_size);
-    let mut headers = [httparse::EMPTY_HEADER; 16];
-    let mut total_read = 0;
-
-    loop {
-        match read_into_buffer(&mut stream, &mut buffer) {
-            Ok(0) => {
-                println!("empty read, bailing");
-                return
-            },
-            Ok(n) => {
-                total_read += n;
-                println!("Did a read {}", n);
-            },
-            Err(e) => {
-                println!("Error occurred while reading {}", e);
-                return;
-            }
-        }
-
-        {
-            let mut request = httparse::Request::new(&mut headers);
-            match request.parse(&buffer).unwrap() {
-                httparse::Status::Complete(n) => {
-                    let body = buffer[n..total_read].iter().cloned().collect();
-                    let request = Request::from_raw(request);
-                    handle_request(&mut stream, request, body);
-                },
-                _ => {
-                    continue;
-                }
-            }
-        }
-
-        // reset the buffer so we have a clean slate for keep-alive.
-        buffer.truncate(0);
-    }
-}
+use octopus::server::handle_client;
 
 fn main() {
-    let port = 8000;
+    mioco::start(|| -> io::Result<()> {
+        let ip = net::IpAddr::from_str("127.0.0.1").unwrap();
+        let port = 8000;
+        let addr = net::SocketAddr::new(ip, port);
 
-    let listener = match TcpListener::bind(("127.0.0.1", port)) {
-        Ok(v) => v,
-        Err(e) => fatal!("Could not bind listener to port {}: {}", port, e)
-    };
+        let listener = match TcpListener::bind(&addr) {
+            Ok(v) => v,
+            Err(e) => fatal!("Could not bind listener to port {}: {}", port, e)
+        };
 
-    // accept connections and process them, spawning a new thread for each one
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                thread::spawn(move|| {
-                    // connection succeeded
-                    handle_client(stream)
-                });
-            }
-            Err(e) => { /* connection failed */ }
+        println!("Starting tcp echo server on {:?}", try!(listener.local_addr()));
+
+        loop {
+            println!("before accepting");
+            let conn = try!(listener.accept());
+            println!("accepted");
+
+            mioco::spawn(move || -> io::Result<()> {
+                handle_client(conn);
+
+                Ok(())
+            });
+
+            println!("spawned");
         }
-    }
+    }).unwrap().unwrap();
 
-    // close the socket server
-    drop(listener);
 }
