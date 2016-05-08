@@ -36,9 +36,7 @@ impl<'interface> Server<'interface> {
             let conn = try!(listener.accept());
 
             mioco::spawn(move || -> io::Result<()> {
-                handle_client(conn);
-
-                Ok(())
+                handle_client(conn)
             });
 
             println!("spawned");
@@ -76,7 +74,7 @@ fn handle_request<'buf, S: Write + Read>(mut stream: &mut S, request: Request<'b
     client.forward(&mut stream, request, body);
 }
 
-fn handle_client<S: Write + Read>(mut stream: S) {
+fn handle_client<S: Write + Read>(mut stream: S) -> io::Result<()> {
     let mut buffer = Vec::with_capacity(65536);
     let mut headers = [httparse::EMPTY_HEADER; 16];
     let mut total_read = 0;
@@ -85,7 +83,7 @@ fn handle_client<S: Write + Read>(mut stream: S) {
         match read_into_buffer(&mut stream, &mut buffer) {
             Ok(0) => {
                 println!("empty read, bailing");
-                return
+                return Ok(());
             },
             Ok(n) => {
                 total_read += n;
@@ -93,7 +91,7 @@ fn handle_client<S: Write + Read>(mut stream: S) {
             },
             Err(e) => {
                 println!("Error occurred while reading {}", e);
-                return;
+                return Err(e);
             }
         }
 
@@ -113,6 +111,7 @@ fn handle_client<S: Write + Read>(mut stream: S) {
 
         // reset the buffer so we have a clean slate for keep-alive.
         buffer.truncate(0);
+        total_read = 0;
     }
 }
 
