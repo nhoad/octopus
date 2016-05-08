@@ -55,7 +55,7 @@ fn handle_request<'buf, S: Write + Read>(mut stream: &mut S, request: Request<'b
             } else {
                 println!("We have {} bytes of {}", body.len(), n);
                 // FIXME: What if it's a 50gb upload! It should read up to a
-                // maximum of 65535 bytes or something, otherwise stream it.
+                // maximum of 65536 bytes or something, otherwise stream it.
                 let i = body.len();
 
                 body.reserve(n);

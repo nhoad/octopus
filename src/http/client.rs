@@ -16,7 +16,7 @@ impl Client {
                 upstream.write_all(&serialized).unwrap();
                 upstream.write_all(&body).unwrap();
 
-                let mut buffer = [0; 65535];
+                let mut buffer = [0; 65536];
 
                 // FIXME: actually parse the response here.
                 loop {

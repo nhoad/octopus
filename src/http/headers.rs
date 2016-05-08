@@ -65,7 +65,7 @@ impl<'buf> Headers<'buf> {
 
 impl<'buf> Into<Vec<u8>> for Headers<'buf> {
     fn into(self) -> Vec<u8> {
-        let mut out = Vec::<u8>::with_capacity(65535);
+        let mut out = Vec::<u8>::with_capacity(65536);
 
         for (name, values) in &self.data {
             for value in values {

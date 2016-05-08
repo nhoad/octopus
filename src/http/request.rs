@@ -15,7 +15,7 @@ pub struct Request<'buf> {
 
 impl<'buf> Into<Vec<u8>> for Request<'buf> {
     fn into(self) -> Vec<u8> {
-        let mut out = Vec::<u8>::with_capacity(65535);
+        let mut out = Vec::<u8>::with_capacity(65536);
 
         let reqline = format!("{} {} HTTP/1.{}\r\n", self.method, self.url.path(), self.version);
         out.extend(reqline.as_bytes());
