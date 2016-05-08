@@ -6,14 +6,33 @@ use std::str;
 use super::headers::Headers;
 
 #[derive(Debug)]
-pub struct Request<'buf> {
-    pub method: &'buf str,
+pub struct Request {
+    pub method: String,
     pub url: url::Url,
     pub version: u8,
-    pub headers: Headers<'buf>,
+    pub headers: Headers,
 }
 
-impl<'buf> Into<Vec<u8>> for Request<'buf> {
+/// Attempt to parse a Request object from a given buffer.
+///
+/// The returned Vec<u8> contains any leftover data from the buffer that was
+/// not parsed as the request, i.e. you should treat it as the beginning of the
+/// request body.
+pub fn parse<'a>(buffer: &'a Vec<u8>, mut headers: &mut [httparse::Header<'a>], total_read: usize) -> Option<(Request, Vec<u8>)> {
+    let mut request = httparse::Request::new(&mut headers);
+    match request.parse(&buffer).unwrap() {
+        httparse::Status::Complete(n) => {
+            let body = buffer[n..total_read].iter().cloned().collect();
+            let request = Request::from_raw(request);
+            Some((request, body))
+        },
+        _ => {
+            None
+        }
+    }
+}
+
+impl Into<Vec<u8>> for Request {
     fn into(self) -> Vec<u8> {
         let mut out = Vec::<u8>::with_capacity(65536);
 
@@ -27,8 +46,8 @@ impl<'buf> Into<Vec<u8>> for Request<'buf> {
     }
 }
 
-impl<'buf, 'headers> Request<'buf> {
-    pub fn from_raw(request: httparse::Request<'buf, 'headers>) -> Request<'buf> {
+impl Request {
+    pub fn from_raw(request: httparse::Request) -> Request {
         let path = request.path.unwrap();
         let mut url = Vec::new();
         let headers = Headers::from_raw(request.headers);
@@ -51,7 +70,7 @@ impl<'buf, 'headers> Request<'buf> {
         Request {
             headers: headers,
             url: url::Url::parse(str::from_utf8(&url).unwrap()).unwrap(),
-            method: request.method.unwrap(),
+            method: String::from(request.method.unwrap()),
             version: request.version.unwrap(),
         }
     }

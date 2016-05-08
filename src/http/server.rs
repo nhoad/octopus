@@ -6,7 +6,7 @@ use std::net;
 use std::str::FromStr;
 
 use super::client::Client;
-use super::request::Request;
+use super::request::{self, Request};
 
 pub struct Server<'interface> {
     interface: &'interface str,
@@ -45,7 +45,7 @@ impl<'interface> Server<'interface> {
 }
 
 
-fn handle_request<'buf, S: Write + Read>(mut stream: &mut S, request: Request<'buf>, mut body: Vec<u8>) {
+fn handle_request<S: Write + Read>(mut stream: &mut S, request: Request, mut body: Vec<u8>) {
     match request.headers.content_length() {
         Some(n) => {
             if body.len() == n {
@@ -95,17 +95,12 @@ fn handle_client<S: Write + Read>(mut stream: S) -> io::Result<()> {
             }
         }
 
-        {
-            let mut request = httparse::Request::new(&mut headers);
-            match request.parse(&buffer).unwrap() {
-                httparse::Status::Complete(n) => {
-                    let body = buffer[n..total_read].iter().cloned().collect();
-                    let request = Request::from_raw(request);
-                    handle_request(&mut stream, request, body);
-                },
-                _ => {
-                    continue;
-                }
+        match request::parse(&buffer, &mut headers, total_read) {
+            Some((request, partial_body)) => {
+                handle_request(&mut stream, request, partial_body);
+            }
+            None => {
+                continue;
             }
         }
 
