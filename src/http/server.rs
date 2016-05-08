@@ -1,10 +1,53 @@
 extern crate httparse;
+extern crate mioco;
 
 use std::io::{self, Read, Write};
+use std::net;
+use std::str::FromStr;
 
-use ::request::Request;
+use super::client::Client;
+use super::request::Request;
 
-fn handle_request<'buf, S: Write + Read>(stream: &mut S, request: Request<'buf>, mut body: Vec<u8>) {
+pub struct Server<'interface> {
+    interface: &'interface str,
+    port: u16,
+}
+
+impl<'interface> Server<'interface> {
+    pub fn new(interface: &'interface str, port: u16) -> Server {
+        Server {
+            interface: interface,
+            port: port,
+        }
+    }
+
+    pub fn start(&self) -> io::Result<()> {
+        let ip = net::IpAddr::from_str(self.interface).unwrap();
+        let addr = net::SocketAddr::new(ip, self.port);
+
+        let listener = match mioco::tcp::TcpListener::bind(&addr) {
+            Ok(v) => v,
+            Err(e) => fatal!("Could not bind listener to port {}: {}", self.port, e)
+        };
+
+        println!("Starting tcp echo server on {:?}", try!(listener.local_addr()));
+
+        loop {
+            let conn = try!(listener.accept());
+
+            mioco::spawn(move || -> io::Result<()> {
+                handle_client(conn);
+
+                Ok(())
+            });
+
+            println!("spawned");
+        }
+    }
+}
+
+
+fn handle_request<'buf, S: Write + Read>(mut stream: &mut S, request: Request<'buf>, mut body: Vec<u8>) {
     match request.headers.content_length() {
         Some(n) => {
             if body.len() == n {
@@ -29,10 +72,11 @@ fn handle_request<'buf, S: Write + Read>(stream: &mut S, request: Request<'buf>,
 
     println!("Handle this: {:?} {:?}", request, request.headers.content_length());
 
-    request.forward(stream, body);
+    let client = Client;
+    client.forward(&mut stream, request, body);
 }
 
-pub fn handle_client<S: Write + Read>(mut stream: S) {
+fn handle_client<S: Write + Read>(mut stream: S) {
     let mut buffer = Vec::with_capacity(65536);
     let mut headers = [httparse::EMPTY_HEADER; 16];
     let mut total_read = 0;

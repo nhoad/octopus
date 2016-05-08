@@ -61,7 +61,10 @@ impl<'buf> Headers<'buf> {
         item.push_back(value);
     }
 
-    pub fn serialize(&self) -> Vec<u8> {
+}
+
+impl<'buf> Into<Vec<u8>> for Headers<'buf> {
+    fn into(self) -> Vec<u8> {
         let mut out = Vec::<u8>::with_capacity(65535);
 
         for (name, values) in &self.data {
