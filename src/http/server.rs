@@ -96,11 +96,18 @@ fn handle_client<S: Write + Read>(mut stream: S) -> io::Result<()> {
         }
 
         match request::parse(&buffer, &mut headers, total_read) {
-            Some((request, partial_body)) => {
+            Ok(Some((request, partial_body))) => {
                 handle_request(&mut stream, request, partial_body);
             }
-            None => {
+            Ok(None) => {
                 continue;
+            },
+            Err(e) => {
+                let reason = format!("Error parsing request: {}", e);
+                println!("{}", reason);
+
+                let error = io::Error::new(io::ErrorKind::Other, reason);
+                return Err(error);
             }
         }
 

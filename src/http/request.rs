@@ -18,16 +18,32 @@ pub struct Request {
 /// The returned Vec<u8> contains any leftover data from the buffer that was
 /// not parsed as the request, i.e. you should treat it as the beginning of the
 /// request body.
-pub fn parse<'a>(buffer: &'a Vec<u8>, mut headers: &mut [httparse::Header<'a>], total_read: usize) -> Option<(Request, Vec<u8>)> {
+pub fn parse<'a>(buffer: &'a Vec<u8>, mut headers: &mut [httparse::Header<'a>], total_read: usize) -> Result<Option<(Request, Vec<u8>)>, String> {
     let mut request = httparse::Request::new(&mut headers);
-    match request.parse(&buffer).unwrap() {
+
+    let res = match request.parse(&buffer) {
+        Ok(res) => res,
+        Err(e) => {
+            let error = format!("{:?}", e);
+            return Err(error);
+        },
+    };
+
+    match res {
         httparse::Status::Complete(n) => {
             let body = buffer[n..total_read].iter().cloned().collect();
-            let request = Request::from_raw(request);
-            Some((request, body))
+
+            match Request::from_raw(request) {
+                Ok(request) => {
+                    return Ok(Some((request, body)));
+                },
+                Err(e) => {
+                    return Err(e);
+                }
+            }
         },
-        _ => {
-            None
+        httparse::Status::Partial => {
+            Ok(None)
         }
     }
 }
@@ -47,57 +63,110 @@ impl Into<Vec<u8>> for Request {
 }
 
 impl Request {
-    pub fn from_raw(request: httparse::Request) -> Request {
-        let path = request.path.unwrap();
-        let mut url = Vec::new();
+    pub fn from_raw(request: httparse::Request) -> Result<Request, String> {
         let headers = Headers::from_raw(request.headers);
 
-        if url_is_relative(path) {
-            // FIXME: from the listening port, tell if it's secure or not for
-            // the correct scheme.
-            let secure = false;
-            if secure {
-                url.extend("https://".as_bytes());
-            } else {
-                url.extend("http://".as_bytes());
+        let url = match url::Url::parse(&request.path.unwrap()) {
+            Ok(url) => url,
+            Err(url::ParseError::RelativeUrlWithoutBase) => {
+                let mut absolute_url = Vec::new();
+
+                // FIXME: from the listening port, tell if it's secure or not for
+                // the correct scheme.
+                let secure = false;
+                if secure {
+                    absolute_url.extend("https://".as_bytes());
+                } else {
+                    absolute_url.extend("http://".as_bytes());
+                }
+
+                match headers.get("Host") {
+                    Some(host) => absolute_url.extend(host),
+                    None => {
+                        return Err("Host header missing".to_owned());
+                    }
+                }
+
+                absolute_url.extend(request.path.unwrap().as_bytes());
+
+                let absolute_url = str::from_utf8(&absolute_url).unwrap();
+
+                match url::Url::parse(&absolute_url) {
+                    Ok(url) => url,
+                    Err(e) => {
+                        return Err(format!("Could not parse {}: {}", absolute_url, e).to_owned());
+                    }
+                }
+            },
+            Err(e) => {
+                return Err(format!("Could not parse {}: {}", request.path.unwrap(), e).to_owned());
             }
+        };
 
-            // FIXME: handle Host header missing
-            url.extend(headers.get("Host").unwrap());
-        }
-        url.extend(path.as_bytes());
-
-        Request {
+        Ok(Request {
             headers: headers,
-            url: url::Url::parse(str::from_utf8(&url).unwrap()).unwrap(),
+            url: url,
             method: String::from(request.method.unwrap()),
             version: request.version.unwrap(),
-        }
+        })
     }
 }
 
-fn url_is_relative(url: &str) -> bool {
-    let colon = url.find(':');
-    let slash = url.find('/');
+#[cfg(test)]
+mod tests {
+    extern crate httparse;
 
-    match slash {
-        Some(slash) => {
-            // we have a slash!
+    #[test]
+    fn test_parse_on_relative_url() {
+        use super::parse;
 
-            match colon {
-                Some(colon) => {
-                    slash < colon
-                },
-                None => {
-                    // we don't have a colon, can't be absolute
-                    true
-                }
-            }
-        },
-        None => {
-            // no slash, can't be relative
-            false
-        }
+        let buf = b"GET / HTTP/1.1\r\nHost: google.com\r\n\r\nHello".to_vec();
+        let mut headers = [httparse::EMPTY_HEADER; 16];
+        let total_read = buf.len();
+
+        let (req, body) = parse(&buf, &mut headers, total_read).unwrap().unwrap();
+
+        assert_eq!(req.headers.get("Host").unwrap(), b"google.com");
+        assert!(req.headers.get("Foo").is_none());
+
+        assert_eq!(req.method, "GET");
+        assert_eq!(req.version, 1u8);
+
+        assert_eq!(body.len(), 5);
+        assert_eq!(body, b"Hello");
+
+        assert_eq!(req.url.as_str(), "http://google.com/");
+    }
+
+    #[test]
+    fn test_parse_on_absolute_url() {
+        use super::parse;
+        let buf = b"GET http://google.com/ HTTP/1.1\r\n\r\nHello".to_vec();
+        let mut headers = [httparse::EMPTY_HEADER; 16];
+        let total_read = buf.len();
+
+        let (req, _) = parse(&buf, &mut headers, total_read).unwrap().unwrap();
+        assert_eq!(req.url.as_str(), "http://google.com/");
+    }
+
+    #[test]
+    fn test_parse_on_relative_url_without_host() {
+        use super::parse;
+        let buf = b"GET / HTTP/1.1\r\n\r\nHello".to_vec();
+        let mut headers = [httparse::EMPTY_HEADER; 16];
+        let total_read = buf.len();
+
+        assert!(parse(&buf, &mut headers, total_read).is_err());
+    }
+
+
+    #[test]
+    fn test_parse_on_nonhttp() {
+        use super::parse;
+        let buf = b"frozen brains tell no tales\r\n".to_vec();
+        let mut headers = [httparse::EMPTY_HEADER; 16];
+        let total_read = buf.len();
+
+        assert!(parse(&buf, &mut headers, total_read).is_err());
     }
 }
-
