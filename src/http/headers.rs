@@ -5,19 +5,19 @@ use std::collections::{HashMap, LinkedList};
 use std::collections::hash_map::Entry;
 
 #[derive(Debug)]
-pub struct Headers<'buf> {
+pub struct Headers {
     // FIXME: case insensitivity
-    data: HashMap<&'buf str, LinkedList<Vec<u8>>>,
+    data: HashMap<String, LinkedList<Vec<u8>>>,
 }
 
-impl<'buf> Headers<'buf> {
-    pub fn new() -> Headers<'buf> {
+impl Headers {
+    pub fn new() -> Headers {
         Headers {
             data: HashMap::new(),
         }
     }
 
-    pub fn from_raw(raw: &[httparse::Header<'buf>]) -> Headers<'buf> {
+    pub fn from_raw(raw: &[httparse::Header]) -> Headers {
         let mut headers = Headers::new();
 
         for header in raw {
@@ -48,8 +48,8 @@ impl<'buf> Headers<'buf> {
         }
     }
 
-    pub fn insert(&mut self, name: &'buf str, value: Vec<u8>) {
-        let mut item = match self.data.entry(name) {
+    pub fn insert(&mut self, name: &str, value: Vec<u8>) {
+        let mut item = match self.data.entry(String::from(name)) {
             Entry::Occupied(entry) => {
                 entry.into_mut()
             },
@@ -61,8 +61,11 @@ impl<'buf> Headers<'buf> {
         item.push_back(value);
     }
 
-    pub fn serialize(&self) -> Vec<u8> {
-        let mut out = Vec::<u8>::with_capacity(65535);
+}
+
+impl Into<Vec<u8>> for Headers {
+    fn into(self) -> Vec<u8> {
+        let mut out = Vec::<u8>::with_capacity(65536);
 
         for (name, values) in &self.data {
             for value in values {
