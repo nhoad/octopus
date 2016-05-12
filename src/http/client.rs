@@ -2,8 +2,7 @@ extern crate mioco;
 extern crate url;
 
 use std::io::{self, Write, Read};
-use std::net;
-use std::str::FromStr;
+use std::net::ToSocketAddrs;
 
 use super::request::Request;
 pub struct Client;
@@ -34,41 +33,30 @@ impl Client {
                     }
                 }
             },
-            Err(_) => {
+            Err(e) => {
+                println!("Error connecting upstream: {}", e);
                 downstream.write_all(b"HTTP/1.1 501 Internal Server Error\r\nContent-Length: 6\r\n\r\nSorry\n").unwrap();
             }
         }
     }
 
     pub fn connect(&self, url: &url::Url) -> io::Result<mioco::tcp::TcpStream> {
-        let domain = url.host_str().unwrap();
-        let port = match url.port() {
-            Some(port) => port,
-            None => {
-                match url.scheme() {
-                    "http" => 80,
-                    "https" => 443,
-                    _ => panic!("Unknown scheme {}", url.scheme())
-                }
-            }
-        };
+        // FIXME: actual async DNS would be nice?
+        let addrs = try!(mioco::sync(|| -> io::Result<url::SocketAddrs> {
+            url.to_socket_addrs()
+        }));
 
-        // FIXME: DNS Lookup. net::lookup_addrs is unstable and also blocking.
-        let ip = net::IpAddr::from_str(domain).unwrap();
-        let addr = net::SocketAddr::new(ip, port);
-
-        // FIXME: configurable retry count
-        for _ in 0..2 {
+        for addr in addrs {
             match mioco::tcp::TcpStream::connect(&addr) {
                 Ok(conn) => {
                     return Ok(conn);
-                },
-                Err(e) => {
-                    println!("failed to connect: {}", e);
+                }
+                Err(_) => {
+                    continue;
                 }
             }
         }
 
-        mioco::tcp::TcpStream::connect(&addr)
+        Err(io::Error::new(io::ErrorKind::NotFound, "No suitable host could be found"))
     }
 }
