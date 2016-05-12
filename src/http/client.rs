@@ -2,6 +2,7 @@ extern crate mioco;
 extern crate url;
 
 use std::io::{self, Write, Read};
+use std::net::ToSocketAddrs;
 
 use super::request::Request;
 pub struct Client;
@@ -40,8 +41,6 @@ impl Client {
     }
 
     pub fn connect(&self, url: &url::Url) -> io::Result<mioco::tcp::TcpStream> {
-        use std::net::ToSocketAddrs;
-
         // FIXME: actual async DNS would be nice?
         let addrs = try!(mioco::sync(|| -> io::Result<url::SocketAddrs> {
             url.to_socket_addrs()
