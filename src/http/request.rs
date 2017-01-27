@@ -64,7 +64,7 @@ impl Into<Vec<u8>> for Request {
 
 impl Request {
     pub fn from_raw(request: httparse::Request) -> Result<Request, String> {
-        let headers = Headers::from_raw(request.headers);
+        let headers = Headers::from_raw(request.headers).unwrap();
 
         let url = match url::Url::parse(&request.path.unwrap()) {
             Ok(url) => url,

@@ -9,3 +9,6 @@ mioco = "^0.8.1"
 
 [dependencies.url]
 git = "https://github.com/servo/rust-url"
+
+[features]
+unstable = []
