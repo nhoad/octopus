@@ -4,9 +4,8 @@ version = "0.1.0"
 authors = ["Nathan Hoad <nathan@getoffmalawn.com>"]
 
 [dependencies]
-httparse = "1.1.2"
-mioco = "^0.5.0"
+httparse = "1.2.1"
+mioco = "^0.8.1"
 
 [dependencies.url]
 git = "https://github.com/servo/rust-url"
-
