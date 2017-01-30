@@ -4,6 +4,7 @@ use std::io;
 use std::str;
 use std::collections::{HashMap, LinkedList};
 use std::collections::hash_map::Entry;
+use std::clone::Clone;
 
 pub const DEFAULT_INTO_BUFFER_CAPACITY: usize = 65536;
 pub const DEFAULT_HEADER_ROW_CAPACITY: usize = 256;
@@ -63,13 +64,33 @@ impl OctopusHeader {
     }
 }
 
+impl Clone for OctopusHeader {
+    fn clone(&self) -> Self {
+        OctopusHeader {
+            original_name: self.original_name().clone(),
+            value: self.value().clone(),
+            value_str: self.value_str().clone(),
+            order: self.order,
+            length_hint: self.length_hint,
+        }
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        self.original_name = source.original_name().clone();
+        self.value = source.value().clone();
+        self.value_str = source.value_str().clone();
+        self.order = source.order;
+        self.length_hint = source.length_hint;
+    }
+}
+
 #[derive(Debug)]
 pub struct Headers {
     data: HashMap<String, LinkedList<OctopusHeader>>,
     total_count: usize,
 }
 
-impl Headers {
+impl<'a> Headers {
     pub fn new() -> Headers {
         Headers {
             data: HashMap::new(),
@@ -96,16 +117,20 @@ impl Headers {
     pub fn content_length(&self) -> Option<usize> {
         match self.get("content-length") {
             Some(value) => {
-                Some(str::from_utf8(&value).unwrap().parse().unwrap())
+                Some(str::from_utf8(value).unwrap().parse().unwrap())
             },
             None => None
         }
     }
 
-    pub fn get(&self, name: &str) -> Option<Vec<u8>> {
-        match self.data.get(&String::from(name).to_lowercase()) {
-            Some(values) => {
-                Some(values.front().unwrap().value().clone())
+    pub fn get(&'a self, name: &str) -> Option<&'a Vec<u8>> {
+        let name_lower = String::from(name).to_lowercase();
+        match self.data.get(&name_lower) {
+            Some(headers) => {
+                match headers.front() {
+                    Some(header) => Some(header.value()),
+                    None => None,
+                }
             },
             None => None
         }
@@ -141,6 +166,7 @@ impl Headers {
         host_ok && length_ok
     }
 
+    // Yields the UTF-8 version of the headers without a move.
     fn to_utf8(&self) -> Vec<u8> {
         // TODO: self.total_count and self.data should be protected by mutexes
         let empty_vec = Vec::<u8>::new();
@@ -170,6 +196,20 @@ impl Headers {
         temp.into_iter().fold(Vec::with_capacity(bytes), |mut acc, v| {
             acc.extend(v); acc
         })
+    }
+}
+
+impl Clone for Headers {
+    fn clone(&self) -> Self {
+        Headers {
+            data: self.data.clone(),
+            total_count: self.total_count,
+        }
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        self.data = source.data.clone();
+        self.total_count = source.total_count;
     }
 }
 
@@ -214,7 +254,9 @@ mod tests {
 
         headers.insert("Host", &value);
 
-        assert_eq!(headers.get("Host"), Some(value));
+        let host_result = headers.get("Host");
+        assert!(host_result.is_some());
+        assert_eq!(*host_result.unwrap(), value);
         assert_eq!(headers.get("Most"), None);
     }
 
@@ -316,6 +358,22 @@ mod bench {
 
         b.iter(|| {
             test::black_box(Headers::from_raw(parsed).unwrap())
+        });
+    }
+
+    #[bench]
+    fn successful_get(b: &mut Bencher) {
+        let (_, headers) = tests::create_standard_headers();
+        b.iter(|| {
+            test::black_box(headers.get("host"))
+        });
+    }
+
+    #[bench]
+    fn unsuccessful_get(b: &mut Bencher) {
+        let (_, headers) = tests::create_standard_headers();
+        b.iter(|| {
+            test::black_box(headers.get("most"))
         });
     }
 }
