@@ -8,24 +8,37 @@ use std::collections::hash_map::Entry;
 pub const DEFAULT_INTO_BUFFER_CAPACITY: usize = 65536;
 pub const DEFAULT_HEADER_ROW_CAPACITY: usize = 256;
 
+// \r\n, and ": "
+const HEADER_EXTRA_BYTES: usize = 4;
+
+const HEADER_SEPARATOR: &'static [u8] = b": ";
+const HEADER_NEWLINE: &'static [u8] = b"\r\n";
+
 #[derive(Debug)]
 struct OctopusHeader {
     // Original header name with case intact. This is different to the keys in
     // the main header listing which are normalized.
     original_name: String,
     value: Vec<u8>,
+    value_str: String,
 
     // Which header was this in the original request/response? 0 is first, 1 is
     // second, and so on.
     order: usize,
+
+    // Length hint for this header.
+    length_hint: usize,
 }
 
 impl OctopusHeader {
     pub fn new(original: String, contents: &Vec<u8>, order: usize) -> OctopusHeader {
+        let length_hint = original.len() + contents.len() + HEADER_EXTRA_BYTES;
         OctopusHeader {
             original_name: original,
             value: contents.clone(),
+            value_str: String::from_utf8(contents.clone()).unwrap(),
             order: order,
+            length_hint: length_hint,
         }
     }
 
@@ -33,12 +46,20 @@ impl OctopusHeader {
         &self.value
     }
 
-    pub fn original_name(&self) -> String {
-        self.original_name.clone()
+    pub fn value_str<'a>(&'a self) -> &'a String {
+        &self.value_str
+    }
+
+    pub fn original_name<'a>(&'a self) -> &'a String {
+        &self.original_name
     }
 
     pub fn order(&self) -> usize {
         self.order
+    }
+
+    pub fn length_hint(&self) -> usize {
+        self.length_hint
     }
 }
 
@@ -121,29 +142,29 @@ impl Headers {
     }
 
     fn to_utf8(&self) -> Vec<u8> {
+        // TODO: self.total_count and self.data should be protected by mutexes
         let empty_vec = Vec::<u8>::new();
         let mut temp = Vec::<Vec<u8>>::new();
         temp.resize(self.total_count + 1, empty_vec);
 
         // Put together the header rows and insert in the correct order.
         let mut bytes = 0;
-        let mut value = Vec::<u8>::with_capacity(DEFAULT_HEADER_ROW_CAPACITY);
         for (_, headers) in &self.data {
             for header in headers {
-                value.extend(header.original_name().as_bytes());
-                value.extend(b": ");
-                value.extend(header.value());
-                value.extend(b"\r\n");
+                let mut row = &mut temp[header.order()];
+                row.reserve(header.length_hint());
+                row.extend(header.original_name().as_bytes());
+                row.extend(HEADER_SEPARATOR);
+                row.extend(header.value());
+                row.extend(HEADER_NEWLINE);
 
-                bytes += value.len();
-                temp[header.order()] = value.clone();
-
-                value.clear();
+                bytes += row.len();
             }
         }
 
         // Always add a dummy row for the end-of-request newline
-        temp[self.total_count] = b"\r\n".iter().cloned().collect();
+        temp[self.total_count] = HEADER_NEWLINE.iter().cloned().collect();
+        bytes += HEADER_NEWLINE.len();
 
         // Collect rows into final Vec
         temp.into_iter().fold(Vec::with_capacity(bytes), |mut acc, v| {
