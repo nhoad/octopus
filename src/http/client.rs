@@ -42,17 +42,16 @@ impl Client {
 
     pub fn connect(&self, url: &url::Url) -> io::Result<mioco::tcp::TcpStream> {
         // FIXME: actual async DNS would be nice?
-        let addrs = try!(mioco::sync(|| -> io::Result<url::SocketAddrs> {
-            url.to_socket_addrs()
-        }));
-
-        for addr in addrs {
-            match mioco::tcp::TcpStream::connect(&addr) {
-                Ok(conn) => {
-                    return Ok(conn);
-                }
-                Err(_) => {
-                    continue;
+        for addrs in url.to_socket_addrs() {
+            // Extract std::net::SocketAddr for this set
+            for addr in addrs {
+                match mioco::tcp::TcpStream::connect(&addr) {
+                    Ok(conn) => {
+                        return Ok(conn);
+                    }
+                    Err(_) => {
+                        continue;
+                    }
                 }
             }
         }
