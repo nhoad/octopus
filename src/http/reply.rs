@@ -12,7 +12,7 @@ pub struct Reply {
 
 impl Reply {
     pub fn from_raw(response: httparse::Response) -> Reply {
-        let headers = Headers::from_raw(response.headers);
+        let headers = Headers::from_raw(response.headers).unwrap();
 
         Reply {
             version: response.version.unwrap(),
